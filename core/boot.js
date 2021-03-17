@@ -8,7 +8,7 @@
 // IMPORTANT: The only global requires here should be overrides + debug so we can monitor timings with DEBUG=ghost:boot* node ghost
 require('./server/overrides');
 const debug = require('ghost-ignition').debug('boot');
-// END OF GLOBAL REQUIRES
+// END OF GLOBAL REQUIRESƒ
 
 /**
  * Helper class to create consistent log messages
@@ -46,6 +46,7 @@ function notifyServerReady(error) {
 async function initDatabase({config, logging}) {
     const DatabaseStateManager = require('./server/data/db/state-manager');
     const dbStateManager = new DatabaseStateManager({knexMigratorFilePath: config.get('paths:appRoot')});
+    console.log("dbStateManager create complete");
     await dbStateManager.makeReady({logging});
 }
 
@@ -219,6 +220,9 @@ async function initBackgroundServices({config}) {
  * - This function is written with async/await so you can read, line by line, what happens on boot
  * - All the functions above handle init/boot logic for a single component
  */
+
+ module.exports.started = false;
+
 async function bootGhost() {
     // Metrics
     const startTime = Date.now();
@@ -291,9 +295,37 @@ async function bootGhost() {
 
         // We return the server purely for testing purposes
         debug('End Boot: Returning Ghost Server');
+
+        const binaryMimeTypes = [
+            'application/javascript',
+            'application/json',
+            'application/octet-stream',
+            'application/xml',
+            'application/zip',
+            'font/eot',
+            'font/opentype',
+            'font/otf',
+            'image/jpeg',
+            'image/png',
+            'image/svgxml',
+            'image/x-icon',
+            'text/comma-separated-values',
+            'text/css',
+            'text/html',
+            'text/javascript',
+            'text/plain',
+            'text/text',
+            'text/xml'
+        ];
+        const awsServerlessExpress = require('aws-serverless-express');
+        module.exports.server = awsServerlessExpress.createServer(ghostApp, null, binaryMimeTypes);
+        module.exports.started = true;
+
+
         return ghostServer;
     } catch (error) {
         const errors = require('@tryghost/errors');
+
 
         // Ensure the error we have is an ignition error
         let serverStartError = error;
@@ -317,3 +349,4 @@ async function bootGhost() {
 }
 
 module.exports = bootGhost;
+

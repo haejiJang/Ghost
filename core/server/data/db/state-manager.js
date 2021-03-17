@@ -35,6 +35,7 @@ class DatabaseStateManager {
 
     async getState() {
         let state = states.READY;
+        console.log("getState started");
         try {
             await this.knexMigrator.isDatabaseOK();
             return state;
@@ -62,7 +63,7 @@ class DatabaseStateManager {
             if (!errors.utils.isIgnitionError(errorToThrow)) {
                 errorToThrow = new errors.GhostError({message: errorToThrow.message, err: errorToThrow});
             }
-
+            console.log(errorToThrow);
             throw errorToThrow;
         }
     }
@@ -70,7 +71,7 @@ class DatabaseStateManager {
     async makeReady({logging}) {
         try {
             let state = await this.getState();
-
+            console.log("current db state 0,1,2,3: r,i,m,e", state);
             if (logging) {
                 printState({state, logging});
             }
@@ -88,7 +89,7 @@ class DatabaseStateManager {
             }
 
             state = await this.getState();
-
+            console.log("after doing something db state 0,1,2,3: r,i,m,e", state);
             if (logging) {
                 printState({state, logging});
             }
