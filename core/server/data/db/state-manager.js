@@ -35,7 +35,6 @@ class DatabaseStateManager {
 
     async getState() {
         let state = states.READY;
-        console.log("getState started");
         try {
             await this.knexMigrator.isDatabaseOK();
             return state;
