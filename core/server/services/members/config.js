@@ -31,8 +31,12 @@ class MembersConfigProvider {
      * @private
      */
     _getDomain() {
-        const domain = this._urlUtils.urlFor('home', true).match(new RegExp('^https?://([^/:?#]+)(?:[/:?#]|$)', 'i'));
-        return domain && domain[1];
+        const url = this._urlUtils.urlFor('home', true).match(new RegExp('^https?://([^/:?#]+)(?:[/:?#]|$)', 'i'));
+        const domain = (url && url[1]) || '';
+        if (domain.startsWith('www.')) {
+            return domain.replace(/^(www)\.(?=[^/]*\..{2,5})/, '');
+        }
+        return domain;
     }
 
     getEmailFromAddress() {
@@ -211,7 +215,25 @@ class MembersConfigProvider {
     }
 
     getAllowSelfSignup() {
-        return this._settingsCache.get('members_allow_free_signup');
+        // 'invite' and 'none' members signup access disables all signup
+        if (this._settingsCache.get('members_signup_access') !== 'all') {
+            return false;
+        }
+
+        // if stripe is not connected then selected plans mean nothing.
+        // disabling signup would be done by switching to "invite only" mode
+        if (!this.isStripeConnected()) {
+            return true;
+        }
+
+        // self signup must be available for free plan signup to work
+        const hasFreePlan = this._settingsCache.get('portal_plans').includes('free');
+        if (hasFreePlan) {
+            return true;
+        }
+
+        // signup access is enabled but there's no free plan, don't allow self signup
+        return false;
     }
 
     getTokenConfig() {

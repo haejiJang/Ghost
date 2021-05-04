@@ -2,13 +2,13 @@ const fs = require('fs-extra');
 const os = require('os');
 const path = require('path');
 const security = require('@tryghost/security');
-const {events} = require('../../lib/common');
-const themeService = require('../../../frontend/services/themes');
+const events = require('../../lib/common/events');
+const themeService = require('../../services/themes');
 const limitService = require('../../services/limits');
 const models = require('../../models');
 const request = require('../../lib/request');
 const errors = require('@tryghost/errors/lib/errors');
-const i18n = require('../../lib/common/i18n');
+const i18n = require('../../../shared/i18n');
 
 module.exports = {
     docName: 'themes',
@@ -35,8 +35,13 @@ module.exports = {
             }
         },
         permissions: true,
-        query(frame) {
+        async query(frame) {
             let themeName = frame.options.name;
+
+            if (limitService.isLimited('customThemes')) {
+                await limitService.errorIfWouldGoOverLimit('customThemes', {value: themeName});
+            }
+
             const newSettings = [{
                 key: 'active_theme',
                 value: themeName
@@ -76,8 +81,9 @@ module.exports = {
             if (frame.options.source === 'github') {
                 const [org, repo] = frame.options.ref.toLowerCase().split('/');
 
+                //TODO: move the organization check to config
                 if (limitService.isLimited('customThemes') && org.toLowerCase() !== 'tryghost') {
-                    await limitService.errorIfWouldGoOverLimit('customThemes');
+                    await limitService.errorIfWouldGoOverLimit('customThemes', {value: repo.toLowerCase()});
                 }
 
                 // omit /:ref so we fetch the default branch
@@ -140,7 +146,8 @@ module.exports = {
         },
         async query(frame) {
             if (limitService.isLimited('customThemes')) {
-                await limitService.errorIfWouldGoOverLimit('customThemes');
+                // Sending a bad string to make sure it fails (empty string isn't valid)
+                await limitService.errorIfWouldGoOverLimit('customThemes', {value: '.'});
             }
 
             // @NOTE: consistent filename uploads

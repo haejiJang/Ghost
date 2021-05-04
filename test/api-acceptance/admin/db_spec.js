@@ -3,7 +3,7 @@ const should = require('should');
 const supertest = require('supertest');
 const sinon = require('sinon');
 const config = require('../../../core/shared/config');
-const {events} = require('../../../core/server/lib/common');
+const events = require('../../../core/server/lib/common/events');
 const testUtils = require('../../utils');
 const {exportedBodyLatest} = require('../../utils/fixtures/export/body-generator');
 const localUtils = require('./utils');
@@ -49,11 +49,11 @@ describe('DB API', function () {
         should.exist(jsonResponse.db);
         jsonResponse.db.should.have.length(1);
 
-        const dataKeys = Object.keys(exportedBodyLatest().db[0].data);
+        const dataKeys = Object.keys(exportedBodyLatest().db[0].data).sort();
 
-        Object.keys(jsonResponse.db[0].data).length.should.eql(28);
-        Object.keys(jsonResponse.db[0].data).length.should.eql(dataKeys.length);
-        jsonResponse.db[0].data.should.have.only.keys(...dataKeys);
+        // NOTE: using `Object.keys` here instead of `should.have.only.keys` assertion
+        //       because when `have.only.keys` fails there's no useful diff
+        Object.keys(jsonResponse.db[0].data).sort().should.be.eql(dataKeys);
     });
 
     it('Can delete all content', async function () {

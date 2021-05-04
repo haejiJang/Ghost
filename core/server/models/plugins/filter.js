@@ -1,5 +1,5 @@
 const debug = require('ghost-ignition').debug('models:plugins:filter');
-const {i18n} = require('../../lib/common');
+const i18n = require('../../../shared/i18n');
 const errors = require('@tryghost/errors');
 
 const RELATIONS = {
@@ -24,6 +24,13 @@ const RELATIONS = {
         joinTable: 'members_labels',
         joinFrom: 'member_id',
         joinTo: 'label_id'
+    },
+    products: {
+        tableName: 'products',
+        type: 'manyToMany',
+        joinTable: 'members_products',
+        joinFrom: 'member_id',
+        joinTo: 'product_id'
     },
     posts_meta: {
         tableName: 'posts_meta',
@@ -60,6 +67,12 @@ const EXPANSIONS = {
     }, {
         key: 'labels',
         replacement: 'labels.slug'
+    }, {
+        key: 'product',
+        replacement: 'products.slug'
+    }, {
+        key: 'products',
+        replacement: 'products.slug'
     }]
 };
 

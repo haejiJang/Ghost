@@ -1,4 +1,5 @@
 const path = require('path');
+const querystring = require('querystring');
 const should = require('should');
 const supertest = require('supertest');
 const sinon = require('sinon');
@@ -6,6 +7,7 @@ const testUtils = require('../../../../utils');
 const localUtils = require('./utils');
 const config = require('../../../../../core/shared/config');
 const labs = require('../../../../../core/server/services/labs');
+const mailService = require('../../../../../core/server/services/mail');
 
 const ghost = testUtils.startGhost;
 
@@ -28,6 +30,58 @@ describe('Members API', function () {
             .then(function () {
                 return localUtils.doAuth(request, 'members');
             });
+    });
+
+    beforeEach(function () {
+        sinon.stub(mailService.GhostMailer.prototype, 'send').resolves('Mail is disabled');
+    });
+
+    afterEach(function () {
+        sinon.restore();
+    });
+
+    it('Can add and send a signup confirmation email', async function () {
+        const member = {
+            name: 'Send Me Confirmation',
+            email: 'member_getting_confirmation@test.com',
+            subscribed: true
+        };
+
+        const queryParams = {
+            send_email: true,
+            email_type: 'signup'
+        };
+
+        const res = await request
+            .post(localUtils.API.getApiQuery(`members/?${querystring.stringify(queryParams)}`))
+            .send({members: [member]})
+            .set('Origin', config.get('url'))
+            .expect('Content-Type', /json/)
+            .expect('Cache-Control', testUtils.cacheRules.private)
+            .expect(201);
+
+        should.not.exist(res.headers['x-cache-invalidate']);
+        const jsonResponse = res.body;
+        should.exist(jsonResponse);
+        should.exist(jsonResponse.members);
+        jsonResponse.members.should.have.length(1);
+
+        jsonResponse.members[0].name.should.equal(member.name);
+        jsonResponse.members[0].email.should.equal(member.email);
+        jsonResponse.members[0].subscribed.should.equal(member.subscribed);
+        testUtils.API.isISO8601(jsonResponse.members[0].created_at).should.be.true();
+
+        should.exist(res.headers.location);
+        res.headers.location.should.equal(`http://127.0.0.1:2369${localUtils.API.getApiQuery('members/')}${res.body.members[0].id}/`);
+
+        mailService.GhostMailer.prototype.send.called.should.be.true();
+        mailService.GhostMailer.prototype.send.args[0][0].to.should.equal('member_getting_confirmation@test.com');
+
+        await request
+            .delete(localUtils.API.getApiQuery(`members/${jsonResponse.members[0].id}/`))
+            .set('Origin', config.get('url'))
+            .expect('Cache-Control', testUtils.cacheRules.private)
+            .expect(204);
     });
 
     it('Can order by email_open_rate', async function () {
@@ -535,7 +589,7 @@ describe('Members API', function () {
             });
     });
 
-    it('Fails to import memmber with invalid values', function () {
+    it('Fails to import member with invalid values', function () {
         return request
             .post(localUtils.API.getApiQuery(`members/upload/`))
             .field('labels', ['new-global-label'])
@@ -559,78 +613,6 @@ describe('Members API', function () {
 
                 should.exist(jsonResponse.meta.import_label);
                 jsonResponse.meta.import_label.slug.should.match(/^import-/);
-            });
-    });
-
-    it('Can fetch stats with no ?days param', function () {
-        return request
-            .get(localUtils.API.getApiQuery('members/stats/'))
-            .set('Origin', config.get('url'))
-            .expect('Content-Type', /json/)
-            .expect('Cache-Control', testUtils.cacheRules.private)
-            // .expect(200) - doesn't surface underlying errors in tests
-            .then((res) => {
-                res.status.should.equal(200, JSON.stringify(res.body));
-
-                should.not.exist(res.headers['x-cache-invalidate']);
-                const jsonResponse = res.body;
-
-                should.exist(jsonResponse);
-                should.exist(jsonResponse.total);
-                should.exist(jsonResponse.total_in_range);
-                should.exist(jsonResponse.total_on_date);
-                should.exist(jsonResponse.new_today);
-
-                // 5 from fixtures and 6 imported in previous tests
-                jsonResponse.total.should.equal(11);
-            });
-    });
-
-    it('Can fetch stats with ?days=90', function () {
-        return request
-            .get(localUtils.API.getApiQuery('members/stats/?days=90'))
-            .set('Origin', config.get('url'))
-            .expect('Content-Type', /json/)
-            .expect('Cache-Control', testUtils.cacheRules.private)
-            // .expect(200) - doesn't surface underlying errors in tests
-            .then((res) => {
-                res.status.should.equal(200, JSON.stringify(res.body));
-
-                should.not.exist(res.headers['x-cache-invalidate']);
-                const jsonResponse = res.body;
-
-                should.exist(jsonResponse);
-                should.exist(jsonResponse.total);
-                should.exist(jsonResponse.total_in_range);
-                should.exist(jsonResponse.total_on_date);
-                should.exist(jsonResponse.new_today);
-
-                // 5 from fixtures and 6 imported in previous tests
-                jsonResponse.total.should.equal(11);
-            });
-    });
-
-    it('Can fetch stats with ?days=all-time', function () {
-        return request
-            .get(localUtils.API.getApiQuery('members/stats/?days=all-time'))
-            .set('Origin', config.get('url'))
-            .expect('Content-Type', /json/)
-            .expect('Cache-Control', testUtils.cacheRules.private)
-            // .expect(200) - doesn't surface underlying errors in tests
-            .then((res) => {
-                res.status.should.equal(200, JSON.stringify(res.body));
-
-                should.not.exist(res.headers['x-cache-invalidate']);
-                const jsonResponse = res.body;
-
-                should.exist(jsonResponse);
-                should.exist(jsonResponse.total);
-                should.exist(jsonResponse.total_in_range);
-                should.exist(jsonResponse.total_on_date);
-                should.exist(jsonResponse.new_today);
-
-                // 5 from fixtures and 6 imported in previous tests
-                jsonResponse.total.should.equal(11);
             });
     });
 

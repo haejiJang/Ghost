@@ -37,6 +37,7 @@ describe('Exporter', function () {
                 'members_login_events',
                 'members_paid_subscription_events',
                 'members_payment_events',
+                'members_products',
                 'members_status_events',
                 'members_stripe_customers',
                 'members_stripe_customers_subscriptions',
@@ -51,6 +52,9 @@ describe('Exporter', function () {
                 'posts_authors',
                 'posts_meta',
                 'posts_tags',
+                'products',
+                'stripe_products',
+                'stripe_prices',
                 'roles',
                 'roles_users',
                 'sessions',
@@ -66,8 +70,10 @@ describe('Exporter', function () {
             should.exist(exportData.meta);
             should.exist(exportData.data);
 
-            exportData.data.should.have.only.keys(...tables);
-            exportData.data.should.have.keys(...Object.keys(exportedBodyLatest().db[0].data));
+            // NOTE: using `Object.keys` here instead of `should.have.only.keys` assertion
+            //       because when `have.only.keys` fails there's no useful diff
+            Object.keys(exportData.data).sort().should.eql(tables.sort());
+            Object.keys(exportData.data).sort().should.containDeep(Object.keys(exportedBodyLatest().db[0].data));
             exportData.meta.version.should.equal(ghostVersion.full);
 
             // excludes table should contain no data

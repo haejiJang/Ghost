@@ -14,16 +14,15 @@ const knexMigrator = new KnexMigrator();
 // Ghost Internals
 const config = require('../../core/shared/config');
 const boot = require('../../core/boot');
-const {events} = require('../../core/server/lib/common');
 const db = require('../../core/server/data/db');
 const models = require('../../core/server/models');
-const notify = require('../../core/server/notify');
 const urlService = require('../../core/frontend/services/url');
 const settingsService = require('../../core/server/services/settings');
 const frontendSettingsService = require('../../core/frontend/services/settings');
 const settingsCache = require('../../core/server/services/settings/cache');
 const web = require('../../core/server/web');
-const themes = require('../../core/frontend/services/themes');
+const themeService = require('../../core/server/services/themes');
+const limits = require('../../core/server/services/limits');
 
 // Other Test Utilities
 const APIUtils = require('./api');
@@ -193,7 +192,7 @@ const restartModeGhostStart = async () => {
 
     // Reload the frontend
     await frontendSettingsService.init();
-    await themes.init();
+    await themeService.init();
 
     // Reload the URL service & wait for it to be ready again
     // @TODO: Prob B: why/how is this different to urlService.resetGenerators?
@@ -204,7 +203,10 @@ const restartModeGhostStart = async () => {
     web.shared.middlewares.customRedirects.reload();
 
     // Trigger themes to load again
-    themes.loadInactiveThemes();
+    themeService.loadInactiveThemes();
+
+    // Reload limits service
+    limits.init();
 };
 
 const bootGhost = async () => {

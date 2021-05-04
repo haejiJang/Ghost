@@ -7,7 +7,6 @@ const localUtils = require('./utils');
 const config = require('../../../core/shared/config');
 const labs = require('../../../core/server/services/labs');
 const Papa = require('papaparse');
-const settingsCache = require('../../../core/server/services/settings/cache');
 const moment = require('moment-timezone');
 
 describe('Members API', function () {
@@ -235,7 +234,7 @@ describe('Members API', function () {
         should.exist(jsonResponse2);
         should.exist(jsonResponse2.members);
         jsonResponse2.members.should.have.length(1);
-        localUtils.API.checkResponse(jsonResponse2.members[0], 'member', 'subscriptions');
+        localUtils.API.checkResponse(jsonResponse2.members[0], 'member', ['subscriptions', 'products']);
         jsonResponse2.members[0].name.should.equal(memberChanged.name);
         jsonResponse2.members[0].email.should.equal(memberChanged.email);
         jsonResponse2.members[0].email.should.not.equal(memberToChange.email);
@@ -376,9 +375,9 @@ describe('Members API', function () {
         importedMember2.subscriptions.length.should.equal(0);
     });
 
-    async function fetchStats() {
+    it('Can fetch member counts stats', async function () {
         const res = await request
-            .get(localUtils.API.getApiQuery('members/stats/'))
+            .get(localUtils.API.getApiQuery('members/stats/count/'))
             .set('Origin', config.get('url'))
             .expect('Content-Type', /json/)
             .expect('Cache-Control', testUtils.cacheRules.private)
@@ -386,85 +385,92 @@ describe('Members API', function () {
 
         should.not.exist(res.headers['x-cache-invalidate']);
         const jsonResponse = res.body;
-
         should.exist(jsonResponse);
         should.exist(jsonResponse.total);
-        should.exist(jsonResponse.total_in_range);
-        should.exist(jsonResponse.total_on_date);
-        should.exist(jsonResponse.new_today);
-
-        // 5 from fixtures, 2 from above posts, 2 from above import
-        jsonResponse.total.should.equal(9);
-
-        return jsonResponse;
-    }
-
-    function parseTotalOnDate(jsonResponse) {
-        // replicate default look back date of 30 days
-        const days = 30;
-        // grab the timezone as mocked above
-        const siteTimezone = settingsCache.get('timezone');
-
-        // rebuild a valid response object such that works on any date-time...
-        // get the start date
-        let currentRangeDate = moment.tz(siteTimezone).subtract(days - 1, 'days');
-        // get the end date but ignore today because we want to set that value ourselves
-        let endDate = moment.tz(siteTimezone).subtract(1, 'hour');
-
-        const output = {};
-        let dateStr;
-
-        // set user count to be 1 for all dates before today to match date as outlined
-        // for the user in valid-members-import.csv who was imported with a start date of '91
-        while (currentRangeDate.isBefore(endDate)) {
-            dateStr = currentRangeDate.format('YYYY-MM-DD');
-            output[dateStr] = 1;
-
-            currentRangeDate = currentRangeDate.add(1, 'day');
-        }
-
-        // format the date for the end date (right now)
-        dateStr = currentRangeDate.format('YYYY-MM-DD');
-
-        // set the end date to match the number of members added from fixtures posts and imports
-        // 5 from fixtures, 2 from above posts, 2 from above import
-        output[dateStr] = 9;
-
-        // deep equality check that the objects match...
-        jsonResponse.total_on_date.should.eql(output);
-    }
-
-    it('Can fetch stats', function () {
-        return fetchStats();
+        should.exist(jsonResponse.resource);
+        should.exist(jsonResponse.data);
+        const data = jsonResponse.data;
+        // 2 from above posts, 2 from above import
+        data[0].free.should.equal(4);
+        data[0].paid.should.equal(0);
+        data[0].comped.should.equal(0);
     });
 
-    it('Can render stats in GMT -X timezones', async function () {
-        // stub the method
-        const stub = sinon.stub(settingsCache, 'get');
+    it('Can import CSV and bulk destroy via auto-added label', function () {
+        // HACK: mock dates otherwise we'll often get unexpected members appearing
+        // from previous tests with the same import label due to auto-generated
+        // import labels only including minutes
+        sinon.stub(Date, 'now').returns(new Date('2021-03-30T17:21:00.000Z'));
 
-        // this was just a GMT -X Timezone picked at random for the test below...
-        stub
-            .withArgs('timezone')
-            .returns('America/Caracas');
+        // import our dummy data for deletion
+        return request
+            .post(localUtils.API.getApiQuery(`members/upload/`))
+            .attach('membersfile', path.join(__dirname, '/../../utils/fixtures/csv/valid-members-for-bulk-delete.csv'))
+            .set('Origin', config.get('url'))
+            .expect('Content-Type', /json/)
+            .expect('Cache-Control', testUtils.cacheRules.private)
+            .then((res) => {
+                should.not.exist(res.headers['x-cache-invalidate']);
 
-        const jsonResponse = await fetchStats();
-        parseTotalOnDate(jsonResponse);
-        // restore the stub so we can use it in other tests
-        stub.restore();
-    });
+                const jsonResponse = res.body;
 
-    it('Can render stats in GMT +X timezones', async function () {
-        // stub the method
-        const stub = sinon.stub(settingsCache, 'get');
+                should.exist(jsonResponse);
+                should.exist(jsonResponse.meta);
+                should.exist(jsonResponse.meta.stats);
+                should.exist(jsonResponse.meta.import_label);
 
-        // the tester that wrote this lives in Adelaide so shoutout to this (random) timezone!
-        stub
-            .withArgs('timezone')
-            .returns('Australia/Adelaide');
+                jsonResponse.meta.stats.imported.should.equal(8);
 
-        const jsonResponse = await fetchStats();
-        parseTotalOnDate(jsonResponse);
-        // restore the stub so we can use it in other tests
-        stub.restore();
+                return jsonResponse.meta.import_label;
+            })
+            .then((importLabel) => {
+                // check that the import worked by checking browse response with filter
+                return request.get(localUtils.API.getApiQuery(`members/?filter=label:${importLabel.slug}`))
+                    .set('Origin', config.get('url'))
+                    .expect('Content-Type', /json/)
+                    .expect('Cache-Control', testUtils.cacheRules.private)
+                    .expect(200)
+                    .then((res) => {
+                        should.not.exist(res.headers['x-cache-invalidate']);
+                        const jsonResponse = res.body;
+                        should.exist(jsonResponse);
+                        should.exist(jsonResponse.members);
+                        jsonResponse.members.should.have.length(8);
+                    })
+                    .then(() => importLabel);
+            })
+            .then((importLabel) => {
+                // perform the bulk delete
+                return request
+                    .del(localUtils.API.getApiQuery(`members/?filter=label:'${importLabel.slug}'`))
+                    .set('Origin', config.get('url'))
+                    .expect('Content-Type', /json/)
+                    .expect('Cache-Control', testUtils.cacheRules.private)
+                    .expect(200)
+                    .then((res) => {
+                        should.not.exist(res.headers['x-cache-invalidate']);
+                        const jsonResponse = res.body;
+                        should.exist(jsonResponse);
+                        should.exist(jsonResponse.meta);
+                        should.exist(jsonResponse.meta.stats);
+                        should.exist(jsonResponse.meta.stats.successful);
+                        should.equal(jsonResponse.meta.stats.successful, 8);
+                    })
+                    .then(() => importLabel);
+            })
+            .then((importLabel) => {
+                // check that the bulk delete worked by checking browse response with filter
+                return request.get(localUtils.API.getApiQuery(`members/?filter=label:${importLabel.slug}`))
+                    .set('Origin', config.get('url'))
+                    .expect('Content-Type', /json/)
+                    .expect('Cache-Control', testUtils.cacheRules.private)
+                    .expect(200)
+                    .then((res) => {
+                        const jsonResponse = res.body;
+                        should.exist(jsonResponse);
+                        should.exist(jsonResponse.members);
+                        jsonResponse.members.should.have.length(0);
+                    });
+            });
     });
 });

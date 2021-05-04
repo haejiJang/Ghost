@@ -5,7 +5,7 @@ const MembersCSVImporter = require('./importer');
 const MembersStats = require('./stats');
 const createMembersApiInstance = require('./api');
 const createMembersSettingsInstance = require('./settings');
-const {events} = require('../../lib/common');
+const events = require('../../lib/common/events');
 const logging = require('../../../shared/logging');
 const urlUtils = require('../../../shared/url-utils');
 const settingsCache = require('../settings/cache');
@@ -39,7 +39,7 @@ const debouncedReconfigureMembersAPI = _.debounce(reconfigureMembersAPI, 600);
 // Bind to events to automatically keep subscription info up-to-date from settings
 events.on('settings.edited', function updateSettingFromModel(settingModel) {
     if (![
-        'members_allow_free_signup',
+        'members_signup_access',
         'members_from_address',
         'members_support_address',
         'members_reply_address',

@@ -7,7 +7,7 @@ const should = require('should');
 const supertest = require('supertest');
 const sinon = require('sinon');
 const config = require('../../../../../core/shared/config');
-const {events} = require('../../../../../core/server/lib/common');
+const events = require('../../../../../core/server/lib/common/events');
 const testUtils = require('../../../../utils');
 const localUtils = require('./utils');
 
@@ -58,7 +58,9 @@ describe('DB API', function () {
                 const jsonResponse = res.body;
                 should.exist(jsonResponse.db);
                 jsonResponse.db.should.have.length(1);
-                Object.keys(jsonResponse.db[0].data).length.should.eql(29);
+
+                // NOTE: 9 default tables + 1 from include parameters
+                Object.keys(jsonResponse.db[0].data).length.should.eql(10);
             });
     });
 
