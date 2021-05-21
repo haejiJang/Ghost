@@ -13,7 +13,7 @@ const ghost = testUtils.startGhost;
 
 let request;
 
-describe('Members API', function () {
+describe('Members API (canary)', function () {
     before(function () {
         sinon.stub(labs, 'isSet').withArgs('members').returns(true);
     });
@@ -96,7 +96,7 @@ describe('Members API', function () {
                 const jsonResponse = res.body;
                 should.exist(jsonResponse.members);
                 localUtils.API.checkResponse(jsonResponse, 'members');
-                jsonResponse.members.should.have.length(5);
+                jsonResponse.members.should.have.length(8);
 
                 jsonResponse.members[0].email.should.equal('paid@test.com');
                 jsonResponse.members[0].email_open_rate.should.equal(80);
@@ -117,7 +117,7 @@ describe('Members API', function () {
             .then((res) => {
                 const jsonResponse = res.body;
                 localUtils.API.checkResponse(jsonResponse, 'members');
-                jsonResponse.members.should.have.length(5);
+                jsonResponse.members.should.have.length(8);
 
                 jsonResponse.members[0].email.should.equal('member2@test.com');
                 jsonResponse.members[0].email_open_rate.should.equal(50);
@@ -203,6 +203,47 @@ describe('Members API', function () {
                 should.exist(jsonResponse);
                 should.exist(jsonResponse.members);
                 jsonResponse.members.should.have.length(0);
+            });
+    });
+
+    it('Paid members subscriptions has price data', function () {
+        const memberChanged = {
+            name: 'Updated name'
+        };
+        return request
+            .get(localUtils.API.getApiQuery('members/?search=egon&paid=true'))
+            .set('Origin', config.get('url'))
+            .expect('Content-Type', /json/)
+            .expect('Cache-Control', testUtils.cacheRules.private)
+            .expect(200)
+            .then((res) => {
+                should.not.exist(res.headers['x-cache-invalidate']);
+                const jsonResponse = res.body;
+                should.exist(jsonResponse);
+                should.exist(jsonResponse.members);
+                jsonResponse.members.should.have.length(1);
+                should.exist(jsonResponse.members[0].subscriptions[0].price);
+                return jsonResponse.members[0];
+            }).then((paidMember) => {
+                return request
+                    .put(localUtils.API.getApiQuery(`members/${paidMember.id}/`))
+                    .send({members: [memberChanged]})
+                    .set('Origin', config.get('url'))
+                    .expect('Content-Type', /json/)
+                    .expect('Cache-Control', testUtils.cacheRules.private)
+                    .expect(200)
+                    .then((res) => {
+                        should.not.exist(res.headers['x-cache-invalidate']);
+
+                        const jsonResponse = res.body;
+
+                        should.exist(jsonResponse);
+                        should.exist(jsonResponse.members);
+                        jsonResponse.members.should.have.length(1);
+                        localUtils.API.checkResponse(jsonResponse.members[0], 'member', ['subscriptions', 'products']);
+                        should.exist(jsonResponse.members[0].subscriptions[0].price);
+                        jsonResponse.members[0].name.should.equal(memberChanged.name);
+                    });
             });
     });
 
@@ -450,7 +491,6 @@ describe('Members API', function () {
                 should(importedMember1.name).equal(null);
                 should(importedMember1.note).equal(null);
                 importedMember1.subscribed.should.equal(true);
-                importedMember1.comped.should.equal(false);
                 importedMember1.subscriptions.should.not.be.undefined();
                 importedMember1.subscriptions.length.should.equal(0);
 
@@ -517,7 +557,6 @@ describe('Members API', function () {
                 should(importedMember1.name).equal('Hannah');
                 should(importedMember1.note).equal('no need to map me');
                 importedMember1.subscribed.should.equal(true);
-                importedMember1.comped.should.equal(false);
                 importedMember1.subscriptions.should.not.be.undefined();
                 importedMember1.subscriptions.length.should.equal(0);
                 importedMember1.labels.length.should.equal(1); // auto-generated import label
@@ -562,7 +601,6 @@ describe('Members API', function () {
                 should(defaultMember1.name).equal(null);
                 should(defaultMember1.note).equal(null);
                 defaultMember1.subscribed.should.equal(true);
-                defaultMember1.comped.should.equal(false);
                 defaultMember1.subscriptions.should.not.be.undefined();
                 defaultMember1.subscriptions.length.should.equal(0);
                 defaultMember1.labels.length.should.equal(1); // auto-generated import label
