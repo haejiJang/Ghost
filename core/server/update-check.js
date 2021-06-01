@@ -16,6 +16,7 @@ const _ = require('lodash');
 const url = require('url');
 const debug = require('ghost-ignition').debug('update-check');
 const api = require('./api').v2;
+const GhostMailer = require('./services/mail').GhostMailer;
 const config = require('../shared/config');
 const urlUtils = require('./../shared/url-utils');
 const errors = require('@tryghost/errors');
@@ -23,8 +24,11 @@ const i18n = require('../shared/i18n');
 const logging = require('../shared/logging');
 const request = require('./lib/request');
 const ghostVersion = require('./lib/ghost-version');
+
 const internal = {context: {internal: true}};
 const allowedCheckEnvironments = ['development', 'production'];
+
+const ghostMailer = new GhostMailer();
 
 function nextCheckTimestamp() {
     const now = Math.round(new Date().getTime() / 1000);
@@ -62,13 +66,24 @@ function updateCheckError(err) {
  * @param {Object} notification
  * @return {Promise}
  */
-function createCustomNotification(notification) {
+async function createCustomNotification(notification) {
     if (!notification) {
-        return Promise.resolve();
+        return;
     }
 
-    return Promise.each(notification.messages, function (message) {
-        let toAdd = {
+    const {users} = await api.users.browse(Object.assign({
+        limit: 'all',
+        include: ['roles']
+    }, internal));
+
+    const adminEmails = users
+        .filter(user => ['Owner', 'Administrator'].includes(user.roles[0].name))
+        .map(user => user.email);
+
+    const siteUrl = config.get('url');
+
+    for (const message of notification.messages) {
+        const toAdd = {
             // @NOTE: the update check service returns "0" or "1" (https://github.com/TryGhost/UpdateCheck/issues/43)
             custom: !!notification.custom,
             createdAt: moment(notification.created_at).toDate(),
@@ -80,9 +95,24 @@ function createCustomNotification(notification) {
             message: message.content
         };
 
+        if (toAdd.type === 'alert') {
+            for (const email of adminEmails) {
+                try {
+                    ghostMailer.send({
+                        to: email,
+                        subject: `Action required: Critical alert from Ghost instance ${siteUrl}`,
+                        html: toAdd.message,
+                        forceTextContent: true
+                    });
+                } catch (err) {
+                    logging.err(err);
+                }
+            }
+        }
+
         debug('Add Custom Notification', toAdd);
-        return api.notifications.add({notifications: [toAdd]}, {context: {internal: true}});
-    });
+        await api.notifications.add({notifications: [toAdd]}, {context: {internal: true}});
+    }
 }
 
 /**
@@ -226,54 +256,58 @@ function updateCheckRequest() {
  * @param {Object} response
  * @return {Promise}
  */
-function updateCheckResponse(response) {
+async function updateCheckResponse(response) {
     let notifications = [];
     let notificationGroups = (config.get('notificationGroups') || []).concat(['all']);
 
     debug('Notification Groups', notificationGroups);
     debug('Response Update Check Service', response);
 
-    return api.settings.edit({settings: [{key: 'next_update_check', value: response.next_check}]}, internal)
-        .then(function () {
-            /**
-             * @NOTE:
-             *
-             * When we refactored notifications in Ghost 1.20, the service did not support returning multiple messages.
-             * But we wanted to already add the support for future functionality.
-             * That's why this helper supports two ways: returning an array of messages or returning an object with
-             * a "notifications" key. The second one is probably the best, because we need to support "next_check"
-             * on the root level of the response.
-             */
-            if (_.isArray(response)) {
-                notifications = response;
-            } else if ((Object.prototype.hasOwnProperty.call(response, 'notifications') && _.isArray(response.notifications))) {
-                notifications = response.notifications;
-            } else {
-                // CASE: default right now
-                notifications = [response];
+    await api.settings.edit({
+        settings: [{
+            key: 'next_update_check',
+            value: response.next_check
+        }]
+    }, internal);
+
+    /**
+     * @NOTE:
+     *
+     * When we refactored notifications in Ghost 1.20, the service did not support returning multiple messages.
+     * But we wanted to already add the support for future functionality.
+     * That's why this helper supports two ways: returning an array of messages or returning an object with
+     * a "notifications" key. The second one is probably the best, because we need to support "next_check"
+     * on the root level of the response.
+     */
+    if (_.isArray(response)) {
+        notifications = response;
+    } else if ((Object.prototype.hasOwnProperty.call(response, 'notifications') && _.isArray(response.notifications))) {
+        notifications = response.notifications;
+    } else {
+        // CASE: default right now
+        notifications = [response];
+    }
+
+    // CASE: Hook into received notifications and decide whether you are allowed to receive custom group messages.
+    if (notificationGroups.length) {
+        notifications = notifications.filter(function (notification) {
+            // CASE: release notification, keep
+            if (!notification.custom) {
+                return true;
             }
 
-            // CASE: Hook into received notifications and decide whether you are allowed to receive custom group messages.
-            if (notificationGroups.length) {
-                notifications = notifications.filter(function (notification) {
-                    // CASE: release notification, keep
-                    if (!notification.custom) {
-                        return true;
-                    }
+            // CASE: filter out messages based on your groups
+            return _.includes(notificationGroups.map(function (groupIdentifier) {
+                if (notification.version.match(new RegExp(groupIdentifier))) {
+                    return true;
+                }
 
-                    // CASE: filter out messages based on your groups
-                    return _.includes(notificationGroups.map(function (groupIdentifier) {
-                        if (notification.version.match(new RegExp(groupIdentifier))) {
-                            return true;
-                        }
-
-                        return false;
-                    }), true) === true;
-                });
-            }
-
-            return Promise.each(notifications, createCustomNotification);
+                return false;
+            }), true) === true;
         });
+    }
+
+    return Promise.each(notifications, createCustomNotification);
 }
 
 /**
@@ -284,27 +318,29 @@ function updateCheckResponse(response) {
  *
  * @returns {Promise}
  */
-function updateCheck() {
+async function updateCheck() {
     // CASE: The check will not happen if your NODE_ENV is not in the allowed defined environments.
     if (_.indexOf(allowedCheckEnvironments, process.env.NODE_ENV) === -1) {
-        return Promise.resolve();
+        return;
     }
 
-    return api.settings.read(_.extend({key: 'next_update_check'}, internal))
-        .then(function then(result) {
-            const nextUpdateCheck = result.settings[0];
+    const result = await api.settings.read(_.extend({key: 'next_update_check'}, internal));
 
-            // CASE: Next update check should happen now?
-            // @NOTE: You can skip this check by adding a config value. This is helpful for developing.
-            if (!config.get('updateCheck:forceUpdate') && nextUpdateCheck && nextUpdateCheck.value && nextUpdateCheck.value > moment().unix()) {
-                return Promise.resolve();
-            }
+    const nextUpdateCheck = result.settings[0];
 
-            return updateCheckRequest()
-                .then(updateCheckResponse)
-                .catch(updateCheckError);
-        })
-        .catch(updateCheckError);
+    // CASE: Next update check should happen now?
+    // @NOTE: You can skip this check by adding a config value. This is helpful for developing.
+    if (!config.get('updateCheck:forceUpdate') && nextUpdateCheck && nextUpdateCheck.value && nextUpdateCheck.value > moment().unix()) {
+        return;
+    }
+
+    try {
+        const response = await updateCheckRequest();
+
+        await updateCheckResponse(response);
+    } catch (err) {
+        updateCheckError(err);
+    }
 }
 
 module.exports = updateCheck;
